@@ -19,10 +19,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if os.Geteuid() != 0 {
-		log.Fatal("This program must be run as root")
-	}
-
 	if os.Getenv("CONTAINER_INIT") == "1" {
 		containerInit()
 		return
@@ -38,6 +34,10 @@ func main() {
 }
 
 func containerSetup() {
+	if os.Geteuid() != 0 {
+		log.Fatal("This program must be run as root")
+	}
+
 	// Create a single parent directory for all container-related dirs
 	containerDir := filepath.Join("/tmp/", containerName)
 	if err := os.MkdirAll(containerDir, 0755); err != nil {
@@ -75,7 +75,26 @@ func containerSetup() {
 	// Start container setup process.
 	cmd := exec.Command(os.Args[0], os.Args[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
+		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
+		Credential: &syscall.Credential{
+			Uid: 0,
+			Gid: 0,
+		},
+		UidMappings: []syscall.SysProcIDMap{
+			{
+				ContainerID: 0,
+				HostID:      1000,
+				Size:        65536,
+			},
+		},
+		GidMappings: []syscall.SysProcIDMap{
+			{
+				ContainerID: 0,
+				HostID:      1000,
+				Size:        65536,
+			},
+		},
+		GidMappingsEnableSetgroups: false,
 	}
 
 	cmd.Stdin = os.Stdin
@@ -95,10 +114,11 @@ func containerSetup() {
 	if err := cmd.Run(); err != nil {
 		log.Printf("Error running command: %v\n", err)
 	}
-
 }
 
 func containerInit() {
+	log.Printf("User id %v", os.Getuid())
+
 	hostname := "container-1"
 	log.Printf("Setting up hostname %q", hostname)
 	if err := syscall.Sethostname([]byte(hostname)); err != nil {

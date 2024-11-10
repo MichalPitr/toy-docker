@@ -75,7 +75,7 @@ func containerSetup() {
 	// Start container setup process.
 	cmd := exec.Command(os.Args[0], os.Args[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUTS,
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
 	}
 
 	cmd.Stdin = os.Stdin
@@ -83,18 +83,19 @@ func containerSetup() {
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), envInitPid)
 
-	log.Println("Starting container...")
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("Error running command: %v\n", err)
-		os.Exit(1)
-	}
-
+	// Host cleanup.
 	defer func() {
 		log.Println("Unmounting container root...")
 		if err := syscall.Unmount(containerRoot, 0); err != nil {
 			log.Printf("Failed to unmount container root at %q: %v", containerRoot, err)
 		}
 	}()
+
+	log.Println("Starting container...")
+	if err := cmd.Run(); err != nil {
+		log.Printf("Error running command: %v\n", err)
+	}
+
 }
 
 func containerInit() {
@@ -112,6 +113,15 @@ func containerInit() {
 
 	log.Printf("Changing dir to /\n")
 	if err := os.Chdir("/"); err != nil {
+		log.Fatalf("Chdir failed: %v", err)
+	}
+
+	if err := syscall.Mount("none", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
+		log.Fatalf("Failed to make mount namespace private")
+	}
+
+	log.Printf("Mounting proc...\n")
+	if err := syscall.Mount("proc", "/proc", "proc", 0, ""); err != nil {
 		log.Fatalf("Chdir failed: %v", err)
 	}
 

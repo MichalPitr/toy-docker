@@ -173,7 +173,15 @@ func containerInit() {
 
 	log.Printf("Mounting proc...\n")
 	if err := syscall.Mount("proc", "/proc", "proc", 0, ""); err != nil {
-		log.Fatalf("Chdir failed: %v", err)
+		log.Fatalf("Mounting proc failed: %v", err)
+	}
+
+	log.Printf("Mounting cgroups...\n")
+	if err := os.MkdirAll("/sys/fs/cgroup", 0755); err != nil {
+		log.Fatalf("Error creating cgroup dir: %v", err)
+	}
+	if err := syscall.Mount("none", "/sys/fs/cgroup", "cgroup2", 0, ""); err != nil {
+		log.Fatalf("Mounting cgroup2 failed: %v", err)
 	}
 
 	log.Printf("Running user command: %v\n", []string{os.Args[2], strings.Join(os.Args[3:], " ")})

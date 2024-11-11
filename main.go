@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -12,6 +13,7 @@ import (
 
 const envInitPid = "CONTAINER_INIT=1"
 const containerName = "container-1"
+const cGroupPath = "/sys/fs/cgroup/toydocker.slice/"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -60,7 +62,11 @@ func containerSetup() {
 		}
 	}
 
-	exec.Command("ls", containerDir).Run()
+	lsCmd := exec.Command("ls", containerDir)
+	lsCmd.Stdin = os.Stdin
+	lsCmd.Stdout = os.Stdout
+	lsCmd.Stderr = os.Stderr
+	lsCmd.Run()
 
 	log.Printf("Mounting overlayfs...\n")
 
@@ -70,12 +76,35 @@ func containerSetup() {
 		log.Fatalf("Failed to mount overlayfs: %v", err)
 	}
 
-	log.Printf("Running self in new uts namespace, exact command: %v\n", []string{os.Args[0], strings.Join(os.Args[1:], " ")})
+	// Setup cgroup for the new container
+	p := path.Join(cGroupPath, containerName)
+	log.Printf("Creating cgroup folder: %q", p)
+	if err := os.MkdirAll(p, 0755); err != nil {
+		log.Fatalf("Failed to create cgroup folder %q: %v", p, err)
+	}
+	log.Printf("Allow modifying cpu and memory controls in children of toydocker.slice...")
+	mustWriteToFile(path.Join(cGroupPath, "cgroup.subtree_control"), "+cpu +memory")
+
+	log.Printf("Setting cgroup rules...")
+	// Configure cgroup limits.
+	// 10% of CPU time of a single core.
+	mustWriteToFile(path.Join(p, "cpu.max"), "10000 100000")
+	// 512MiB of memory
+	mustWriteToFile(path.Join(p, "memory.max"), "512M")
+	// Disable swap
+	mustWriteToFile(path.Join(p, "memory.swap.max"), "0")
+
+	f, err := os.Open(p)
+	if err != nil {
+		log.Fatalf("failed to open cgroup folder: %v", err)
+	}
+	defer f.Close()
+	cgroupFd := f.Fd()
 
 	// Start container setup process.
 	cmd := exec.Command(os.Args[0], os.Args[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
+		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWCGROUP, // TODO: add cgroup ns
 		Credential: &syscall.Credential{
 			Uid: 0,
 			Gid: 0,
@@ -83,18 +112,20 @@ func containerSetup() {
 		UidMappings: []syscall.SysProcIDMap{
 			{
 				ContainerID: 0,
-				HostID:      1000,
+				HostID:      1000, // TODO: switch from default user to dedicated toy-docker user.
 				Size:        65536,
 			},
 		},
 		GidMappings: []syscall.SysProcIDMap{
 			{
 				ContainerID: 0,
-				HostID:      1000,
+				HostID:      1000, // default user
 				Size:        65536,
 			},
 		},
 		GidMappingsEnableSetgroups: false,
+		CgroupFD:                   int(cgroupFd),
+		UseCgroupFD:                true,
 	}
 
 	cmd.Stdin = os.Stdin
@@ -110,7 +141,7 @@ func containerSetup() {
 		}
 	}()
 
-	log.Println("Starting container...")
+	log.Printf("Running self in new uts namespace, exact command: %v\n", []string{os.Args[0], strings.Join(os.Args[1:], " ")})
 	if err := cmd.Run(); err != nil {
 		log.Printf("Error running command: %v\n", err)
 	}
@@ -149,5 +180,12 @@ func containerInit() {
 	// Exec replaces current init process with the user's desired command.
 	if err := syscall.Exec(os.Args[2], os.Args[3:], os.Environ()); err != nil {
 		log.Fatalf("Failed calling user command: %v", err)
+	}
+}
+
+func mustWriteToFile(filename, message string) {
+	err := os.WriteFile(filename, []byte(message), 0644)
+	if err != nil {
+		log.Fatalf("failed to write to file: %v", err)
 	}
 }

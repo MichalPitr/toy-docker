@@ -60,7 +60,7 @@ func containerSetup() {
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), envInitPid)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWCGROUP, // TODO: add cgroup ns
+		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWCGROUP,
 		Credential: &syscall.Credential{
 			Uid: 0,
 			Gid: 0,

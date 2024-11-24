@@ -1,73 +1,92 @@
 # container from scratch
 
-## Host-side setup
+## 1. Host-side setup
 
 ### Setting up filesystem
 
-`mkdir /tmp/container-1/{lower,upper,work,merged}`
+```
+mkdir -p /tmp/container-1/{lower,upper,work,merged}
 
-`cd /tmp/container-1`
+cd /tmp/container-1
 
-`wget https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz`
+wget https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz
 
-`tar -xzf alpine-minirootfs-3.20.3-x86_64.tar.gz -C lower`
+tar -xzf alpine-minirootfs-3.20.3-x86_64.tar.gz -C lower
 
-(Remember to unmount once done!)
-`sudo mount -t overlay overlay -o lowerdir=lower,upperdir=upper,workdir=work merged`
+sudo mount -t overlay overlay -o lowerdir=lower,upperdir=upper,workdir=work merged
 
+```
 ### Setting up control groups v2
 
-Creating parent cgroup for our container.
-
-`sudo mkdir -p /sys/fs/cgroup/toydocker.slice/container-1`
-
-This let's child cgroup modify memory and cpu limits.
-
-`sudo -- sh -c 'echo "+memory +cpu" > cgroup.subtree_control'`
-
-To convert requests and limits, we need to set:
-
-1. requests.cpu -> cpu.weight
-2. limits.cpu -> cpu.max
-3. requests.memory -> nothing
-4. limits.memory -> memory.max
-
-Let's skip requests and just set limits to 500m CPU and 500MiB
-
-`vim cpu.max`
-
-`vim memory.max`
-
-With this, we are done with host-side setup.
-
-## Container-side setup
-
-Next, we setup the namespaces for the container.
-
-`echo $$ > /sys/fs/cgroup/toydocker.slice/container-1/cgroup.procs`
-
 ```
-unshare --user --map-user=1000 -r \
-        --uts \
-        --pid \
-        --cgroup \
-        --kill-child \
-        /bin/bash --norc
+# TODO: Decide if I want to keep parent slice like this or keep it simpler.
+sudo mkdir -p /sys/fs/cgroup/toydocker.slice/container-1
+
+cd /sys/fs/cgroup/toydocker.slice/
+
+sudo -- sh -c 'echo "+memory +cpu" > cgroup.subtree_control'
+
+cd container-1
+
+sudo -- sh -c 'echo "50000 100000" > cpu.max'
+
+sudo -- sh -c 'echo "500M" > memory.max'
 ```
 
-let's check hostname, should be same as original.
-`hostname`
+## 2. Container-side setup
 
-Let's change it
-`hostname container-1 && hostname`
+### Create isolated environment
+```
+# following two commands must run from the same root terminal
+sudo -i
 
-`cd /tmp/container-1/merged`
+# Add current process to cgroup
+echo $$ > /sys/fs/cgroup/toydocker.slice/container-1/cgroup.procs
 
-`chroot . bin/sh`
+# Create new namespaces
+unshare \
+    --uts \
+    --pid \
+    --mount \
+    --net \
+    --ipc \
+    --cgroup \
+    --fork \
+    /bin/bash --norc
+```
 
-`unshare --mount /bin/sh`
+### Setup isolated environment
+```
+hostname container-1
 
-`mount -t proc proc /proc`
+# Make container's root private. This way mount events won't propagate in either direction.
+mount --make-rprivate /tmp/container-1/merged
 
+cd /tmp/container-1/merged
 
-Now we have an 
+# Setup necessary mounts
+mount -t proc proc proc/
+mount -t sysfs sys sys/
+mount -t tmpfs tmpfs tmp/
+mount -t tmpfs tmpfs run/
+
+# Setup minimal /dev
+mount -t tmpfs tmpfs dev/
+mkdir -p dev/pts dev/shm
+mount -t devpts devpts dev/pts
+mount -t tmpfs tmpfs dev/shm
+
+# Setup cgroups
+mkdir -p sys/fs/cgroup
+mount -t cgroup2 none sys/fs/cgroup
+
+# Finally chroot
+chroot . /bin/sh
+```
+
+## 3. Let's verify that Cgroups work
+
+```
+# run cpu intensive command
+yes > /dev/null
+```

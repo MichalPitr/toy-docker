@@ -19,7 +19,6 @@ sudo mount -t overlay overlay -o lowerdir=lower,upperdir=upper,workdir=work merg
 ### Setting up control groups v2
 
 ```
-# TODO: Decide if I want to keep parent slice like this or keep it simpler.
 sudo mkdir -p /sys/fs/cgroup/toydocker.slice/container-1
 
 cd /sys/fs/cgroup/toydocker.slice/
@@ -58,7 +57,7 @@ unshare \
     --ipc \
     --cgroup \
     --fork \
-    /bin/bash --norc
+    /bin/bash
 ```
 
 ### Setup isolated environment
@@ -68,16 +67,11 @@ cd /tmp/container-1/merged
 # Make container's root private
 mount --make-rprivate /
 
-# Create directory for old root
+# Pivot root is safer alternative to chroot used by containerd
 mkdir old_root
-
-# Pivot root
 pivot_root . old_root
-
-# Unmount old root and remove the directory
 umount -l /old_root
 rm -rf /old_root
-
 
 # Essential device nodes
 mknod -m 666 dev/null c 1 3
@@ -92,7 +86,7 @@ bin/mount -t sysfs sysfs sys/
 bin/mount -t tmpfs tmpfs run/
 bin/mount -t proc proc proc/
 
-# Start shell with clean environment and signal handling
+# Start user application, here just a shell
 exec /bin/busybox sh
 ```
 
@@ -101,4 +95,11 @@ exec /bin/busybox sh
 ```
 # run cpu intensive command
 while true; do true; done
+
+# run mem intensive command
+tail /dev/zero
 ```
+
+
+## 4. Questions?
+

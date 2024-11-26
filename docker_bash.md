@@ -28,16 +28,21 @@ sudo -- sh -c 'echo "+memory +cpu" > cgroup.subtree_control'
 
 cd container-1
 
-sudo -- sh -c 'echo "50000 100000" > cpu.max'
+# 10% cpu
+sudo -- sh -c 'echo "10000 100000" > cpu.max'
 
+# 512MiB
 sudo -- sh -c 'echo "500M" > memory.max'
+
+# Disable swap
+sudo -- sh -c 'echo "0" > memory.swap.max'
 ```
 
 ## 2. Container-side setup
 
 ### Create isolated environment
 ```
-# following two commands must run from the same root terminal
+# following two commands must run from the same  root terminal
 sudo -i
 
 # Add current process to cgroup
@@ -48,6 +53,7 @@ unshare \
     --uts \
     --pid \
     --mount \
+    --mount-proc \
     --net \
     --ipc \
     --cgroup \
@@ -57,36 +63,42 @@ unshare \
 
 ### Setup isolated environment
 ```
-hostname container-1
-
-# Make container's root private. This way mount events won't propagate in either direction.
-mount --make-rprivate /tmp/container-1/merged
-
 cd /tmp/container-1/merged
 
-# Setup necessary mounts
-mount -t proc proc proc/
-mount -t sysfs sys sys/
-mount -t tmpfs tmpfs tmp/
-mount -t tmpfs tmpfs run/
+# Make container's root private
+mount --make-rprivate /
 
-# Setup minimal /dev
-mount -t tmpfs tmpfs dev/
-mkdir -p dev/pts dev/shm
-mount -t devpts devpts dev/pts
-mount -t tmpfs tmpfs dev/shm
+# Create directory for old root
+mkdir old_root
 
-# Setup cgroups
-mkdir -p sys/fs/cgroup
-mount -t cgroup2 none sys/fs/cgroup
+# Pivot root
+pivot_root . old_root
 
-# Finally chroot
-chroot . /bin/sh
+# Unmount old root and remove the directory
+umount -l /old_root
+rm -rf /old_root
+
+
+# Essential device nodes
+mknod -m 666 dev/null c 1 3
+mknod -m 666 dev/zero c 1 5
+mknod -m 666 dev/tty c 5 0
+
+# Essential system mounts
+bin/mkdir -p dev/{pts,shm}
+bin/mount -t devpts devpts dev/pts
+bin/mount -t tmpfs tmpfs dev/shm
+bin/mount -t sysfs sysfs sys/
+bin/mount -t tmpfs tmpfs run/
+bin/mount -t proc proc proc/
+
+# Start shell with clean environment and signal handling
+exec /bin/busybox sh
 ```
 
 ## 3. Let's verify that Cgroups work
 
 ```
 # run cpu intensive command
-yes > /dev/null
+while true; do true; done
 ```
